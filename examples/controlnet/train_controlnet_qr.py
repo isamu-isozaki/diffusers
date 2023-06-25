@@ -254,6 +254,12 @@ These are controlnet weights trained on {base_model} with new type of conditioni
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a ControlNet training script.")
     parser.add_argument(
+        "--label_smoothing",
+        type=float,
+        default=0.,
+        help="Label smoothing.",
+    )
+    parser.add_argument(
         "--qr_bce_loss",
         action='store_true',
         help="Binary cross entropy loss for qr code.",
@@ -1104,12 +1110,12 @@ def main(args):
                 for i in range(bsz):
                     decoded_original_pred[i] = qrcode_transform(decoded_original_pred[i])
                     controlnet_image[i] = qrcode_transform(controlnet_image[i])
-                    predicted_qr = F.interpolate(decoded_original_pred[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
+                    predicted_qr = F.interpolate(decoded_original_pred[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC)
                     code_target = F.interpolate(controlnet_image[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
                     if args.qr_bce_loss:
-                        code_losses.append(F.binary_cross_entropy(torch.flatten(predicted_qr.float()), torch.flatten(code_target.float()), reduction="mean"))
+                        code_losses.append(F.binary_cross_entropy(torch.clip(torch.flatten(predicted_qr.float()), min=args.label_smoothing, max=1-args.label_smoothing) , torch.flatten(code_target.float()), reduction="mean"))
                     else:
-                        code_losses.append(F.mse_loss(predicted_qr.float(), code_target.float(), reduction="mean"))
+                        code_losses.append(F.mse_loss(predicted_qr.float() > 0.5, code_target.float(), reduction="mean"))
                 code_loss = torch.mean(code_losses)
                 content_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 loss = content_loss + args.code_weight* code_loss
