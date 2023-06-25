@@ -254,6 +254,23 @@ These are controlnet weights trained on {base_model} with new type of conditioni
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a ControlNet training script.")
     parser.add_argument(
+        "--qr_bce_loss",
+        action='store_true',
+        help="Binary cross entropy loss for qr code.",
+    )
+    parser.add_argument(
+        "--qr_character_num",
+        type=int,
+        default=None,
+        help="The default number of characters for qr code.",
+    )
+    parser.add_argument(
+        "--qr_version",
+        type=int,
+        default=5,
+        help="The default qr code version.",
+    )
+    parser.add_argument(
         "--code_weight",
         type=float,
         default=1.,
@@ -611,10 +628,13 @@ def parse_args(input_args=None):
 
     return args
 
-def get_random_qr_code():
-    qrcode_data_size = random.randint(16, 128)
+def get_random_qr_code(args):
+    if args.qr_character_num is not None:
+        qrcode_data_size = args.qr_character_num
+    else:
+        qrcode_data_size = random.randint(16, 128)
     data = ''.join(random.choices(string.printable, k=qrcode_data_size))
-    version = random.randint(5)+1
+    version = args.qr_version
     qr = qrcode.QRCode(
         version=version,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -713,7 +733,7 @@ def make_train_dataset(args, tokenizer, accelerator):
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in images]
-        conditioning_images = [get_random_qr_code().convert("RGB") for _ in range(len(examples[image_column]))]
+        conditioning_images = [get_random_qr_code(args).convert("RGB") for _ in range(len(examples[image_column]))]
         qrcode_sizes = [condition_image.size[0] for condition_image in conditioning_images]
         conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
 
@@ -1027,6 +1047,7 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
     image_logs = None
+    qrcode_transform = transforms.Compose(transforms.Grayscale(num_output_channels=1), transforms.GaussianBlur(3))
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet):
@@ -1081,11 +1102,17 @@ def main(args):
                 decoded_original_pred = (decoded_original_pred+1)/2.
                 code_losses = []
                 for i in range(bsz):
-                    predicted_qr = F.interpolate(decoded_original_pred[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BILINEAR) > 0.5
-                    code_target = F.interpolate(controlnet_image[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BILINEAR) > 0.5
-                    code_losses.append(F.mse_loss(predicted_qr.float(), code_target.float(), reduction="mean"))
+                    decoded_original_pred[i] = qrcode_transform(decoded_original_pred[i])
+                    controlnet_image[i] = qrcode_transform(controlnet_image[i])
+                    predicted_qr = F.interpolate(decoded_original_pred[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
+                    code_target = F.interpolate(controlnet_image[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
+                    if args.qr_bce_loss:
+                        code_losses.append(F.binary_cross_entropy(torch.flatten(predicted_qr.float()), torch.flatten(code_target.float()), reduction="mean"))
+                    else:
+                        code_losses.append(F.mse_loss(predicted_qr.float(), code_target.float(), reduction="mean"))
                 code_loss = torch.mean(code_losses)
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")+args.code_weight* code_loss
+                content_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                loss = content_loss + args.code_weight* code_loss
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -1119,7 +1146,7 @@ def main(args):
                             global_step,
                         )
 
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {"loss": loss.detach().item(), "code_loss": code_loss.detach().item(), "content_loss": content_loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
