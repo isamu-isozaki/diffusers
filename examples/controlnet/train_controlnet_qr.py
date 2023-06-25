@@ -19,7 +19,13 @@ import math
 import os
 import random
 from pathlib import Path
-
+import string
+import PIL
+import torch.nn.functional as F
+try:
+    import qrcode
+except ImportError:
+    raise Exception("Please install qrcode with pip install qrcode")
 import accelerate
 import numpy as np
 import torch
@@ -51,22 +57,7 @@ from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 from torch import nn
 from einops import einsum
-tensor2pil = transforms.ToPILImage()
-def get_target(binary_result, b_robust, w_robust, module_num=37, module_size=16):
-    img_size = module_size * module_num
-    target = np.require(np.ones((img_size, img_size)), dtype='uint8', requirements=['O', 'W'])
 
-    for i in range(module_num):
-        for j in range(module_num):
-            # print(str(i) + ' == ' + str(j))
-            one_binary_result = binary_result[i, j]
-            if one_binary_result == 0:
-                target[i * module_size:(i + 1) * module_size, j * module_size:(j + 1) * module_size] = b_robust
-            else:
-                target[i * module_size:(i + 1) * module_size, j * module_size:(j + 1) * module_size] = w_robust
-
-    target = load(Image.fromarray(target.astype('uint8')).convert('RGB')).unsqueeze(0).cuda()
-    return target
 def get_original(noise_scheduler, model_output, sample: torch.FloatTensor, timestep: int):
         t = timestep
         alpha_prod_t = noise_scheduler.alphas_cumprod[t]
@@ -83,101 +74,6 @@ def get_original(noise_scheduler, model_output, sample: torch.FloatTensor, times
                 " `v_prediction`  for the DDPMScheduler."
             )
         return pred_original_sample, beta_prod_t
-
-def tensor_to_PIL(tensor):
-    image = tensor.cpu().clone()
-    image = image.squeeze(0)
-    image = tensor2pil(image)
-    return image
-
-def get_action_matrix(img_target, img_code, module_size=16, min_threshold=50, max_threshold=200):
-    img_code = np.require(np.asarray(img_code.convert('L')), dtype='uint8', requirements=['O', 'W'])
-    img_target = np.require(np.array(img_target.convert('L')), dtype='uint8', requirements=['O', 'W'])
-
-    ideal_result = get_binary_result(img_code, module_size)
-    center_mat = get_center_pixel(img_target, module_size)
-    error_module = get_error_module(center_mat, code_result=ideal_result,
-                                    min_threshold=min_threshold,
-                                    max_threshold=max_threshold)
-    return error_module, ideal_result
-
-
-def get_binary_result(img_code, module_size, module_number=37):
-    binary_result = np.zeros((module_number, module_number))
-    for j in range(module_number):
-        for i in range(module_number):
-            module = img_code[i * module_size:(i + 1) * module_size, j * module_size:(j + 1) * module_size]
-            module_color = np.around(np.mean(module), decimals=2)
-            if module_color < 128:
-                binary_result[i, j] = 0
-            else:
-                binary_result[i, j] = 1
-    return binary_result
-
-
-def get_center_pixel(img_target, module_size):
-    center_mat = np.zeros((37, 37))
-    for j in range(37):
-        for i in range(37):
-            module = img_target[i * module_size:(i + 1) * module_size, j * module_size:(j + 1) * module_size]
-            module_color = np.mean(module[5:12, 5:12])
-            center_mat[i, j] = module_color
-    return center_mat
-
-
-def get_error_module(center_mat, code_result, min_threshold, max_threshold):
-    error_module = np.ones((37, 37))  # 0 means correct,1 means error
-    for j in range(37):
-        for i in range(37):
-            center_pixel = center_mat[i, j]
-            right_result = code_result[i, j]
-            if right_result == 0 and center_pixel < min_threshold:
-                error_module[i, j] = 0
-            elif right_result == 1 and center_pixel > max_threshold:
-                error_module[i, j] = 0
-            else:
-                error_module[i, j] = 1
-    return error_module
-def MaxMinNormalization(loss_img):
-    maxvalue = np.max(loss_img)
-    minvalue = np.min(loss_img)
-    img = (loss_img - minvalue) / (maxvalue - minvalue)
-    img = np.around(img, decimals=2)
-    return img
-
-
-def get_3DGauss(s=0, e=15, sigma=1.5, mu=7.5):
-    x, y = np.mgrid[s:e:16j, s:e:16j]
-    z = (1 / (2 * math.pi * sigma ** 2)) * np.exp(-((x - mu) ** 2 + (y - mu) ** 2) / (2 * sigma ** 2))
-    z = torch.from_numpy(MaxMinNormalization(z.astype(np.float32)))
-    for j in range(16):
-        for i in range(16):
-            if z[i, j] < 0.1:
-                z[i, j] = 0
-    return z
-
-class SSlayer(nn.Module):
-    def __init__(self, requires_grad=False):
-        super(SSlayer, self).__init__()
-
-        cov_module = nn.Conv2d(in_channels=3, out_channels=3, kernel_size=16, stride=16, padding=0, bias=False)
-
-        weight = get_3DGauss()  # [16,16]
-        weight = weight.unsqueeze(0).unsqueeze(0)  # [1,1,16,16]
-        weight = torch.cat([weight, weight, weight], dim=1)  # [1,3,16,16]
-        cov_module.weight = nn.Parameter(weight)
-        self.conv_module = nn.Sequential(
-            cov_module
-        )
-
-        if not requires_grad:
-            for param in self.parameters():
-                param.requires_grad = False # each kernel is fixed to gauss weight
-
-    def forward(self, x):
-        x = x.repeat(1, 1, 1, 1)
-        x = self.conv_module(x)
-        return x  # return x for visualization
 
 if is_wandb_available():
     import wandb
@@ -357,6 +253,12 @@ These are controlnet weights trained on {base_model} with new type of conditioni
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a ControlNet training script.")
+    parser.add_argument(
+        "--code_weight",
+        type=float,
+        default=1.,
+        help="The strength of focusing on the code weight.",
+    )
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
@@ -709,7 +611,22 @@ def parse_args(input_args=None):
 
     return args
 
-
+def get_random_qr_code():
+    qrcode_data_size = random.randint(16, 128)
+    data = ''.join(random.choices(string.printable, k=qrcode_data_size))
+    version = random.randint(5)+1
+    qr = qrcode.QRCode(
+        version=version,
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=10,
+        border=0
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color='black', back_color='white')
+    img = np.float32(np.asarray(img)) * 255
+    img = np.dstack((img, img, img))
+    return PIL.Image.fromarray(img.astype(np.uint8))
 def make_train_dataset(args, tokenizer, accelerator):
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
@@ -757,16 +674,6 @@ def make_train_dataset(args, tokenizer, accelerator):
                 f"`--caption_column` value '{args.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
 
-    if args.conditioning_image_column is None:
-        conditioning_image_column = column_names[2]
-        logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
-    else:
-        conditioning_image_column = args.conditioning_image_column
-        if conditioning_image_column not in column_names:
-            raise ValueError(
-                f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
     def tokenize_captions(examples, is_train=True):
         captions = []
         for caption in examples[caption_column]:
@@ -806,12 +713,13 @@ def make_train_dataset(args, tokenizer, accelerator):
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in images]
-
-        conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
+        conditioning_images = [get_random_qr_code().convert("RGB") for _ in range(len(examples[image_column]))]
+        qrcode_sizes = [condition_image.size[0] for condition_image in conditioning_images]
         conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
 
         examples["pixel_values"] = images
         examples["conditioning_pixel_values"] = conditioning_images
+        examples["qrcode_sizes"] = qrcode_sizes
         examples["input_ids"] = tokenize_captions(examples)
 
         return examples
@@ -843,7 +751,6 @@ def collate_fn(examples):
 
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
-
     accelerator_project_config = ProjectConfiguration(total_limit=args.checkpoints_total_limit)
 
     accelerator = Accelerator(
@@ -1119,7 +1026,6 @@ def main(args):
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
-    ss_layer = SSlayer(requires_grad=False).to(accelerator.device, dtype=weight_dtype)
     image_logs = None
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
@@ -1143,7 +1049,7 @@ def main(args):
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
                 controlnet_image = batch["conditioning_pixel_values"].to(dtype=weight_dtype)
-
+                qrcode_sizes = batch["qrcode_sizes"]
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
                     timesteps,
@@ -1172,19 +1078,14 @@ def main(args):
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
                 original_pred_latent = get_original(noise_scheduler, model_pred, noisy_latents, timesteps)
                 decoded_original_pred = vae.decode(original_pred_latent)/vae.config.scaling_factor
-                # TODO: below scaling is probably wrong. Fix it
-                decoded_normal_image = (decoded_original_pred+1)*127.5
-                controlnet_normal_image = (decoded_original_pred+1)*127.5
-                error_matrix, ideal_result = get_action_matrix(
-                    img_target=tensor_to_PIL(decoded_original_pred),
-                    img_code=tensor_to_PIL(controlnet_normal_image),
-                    min_threshold=80, Dis_w=180
-                )
-                activate_weight = torch.tensor(error_matrix.astype('float32')).to(accelerator.device, dtype=weight_dtype)
-                code_target = ss_layer(get_target(ideal_result, b_robust=50, w_robust=200))*activate_weight
-                predicted_qr = ss_layer(decoded_original_pred)*activate_weight
-                code_loss = F.mse_loss(predicted_qr.float(), code_target.float(), reduction="mean")
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")+code_loss
+                decoded_original_pred = (decoded_original_pred+1)/2.
+                code_losses = []
+                for i in range(bsz):
+                    predicted_qr = F.interpolate(decoded_original_pred[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BILINEAR) > 0.5
+                    code_target = F.interpolate(controlnet_image[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BILINEAR) > 0.5
+                    code_losses.append(F.mse_loss(predicted_qr.float(), code_target.float(), reduction="mean"))
+                code_loss = torch.mean(code_losses)
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")+args.code_weight* code_loss
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
