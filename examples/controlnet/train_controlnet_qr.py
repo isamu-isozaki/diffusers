@@ -1053,7 +1053,7 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
     image_logs = None
-    qrcode_transform = transforms.Compose(transforms.Grayscale(num_output_channels=1), transforms.GaussianBlur(3))
+    qrcode_transform = transforms.Compose([transforms.Grayscale(num_output_channels=1), transforms.GaussianBlur(3)])
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet):
