@@ -766,7 +766,7 @@ def collate_fn(examples):
     conditioning_pixel_values = torch.stack([example["conditioning_pixel_values"] for example in examples])
     conditioning_pixel_values = conditioning_pixel_values.to(memory_format=torch.contiguous_format).float()
 
-    qrcode_sizes = torch.stack([example["qrcode_sizes"] for example in examples])
+    qrcode_sizes = [example["qrcode_sizes"] for example in examples]
 
     input_ids = torch.stack([example["input_ids"] for example in examples])
 
