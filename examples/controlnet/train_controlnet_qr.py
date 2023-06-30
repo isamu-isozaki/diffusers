@@ -1111,14 +1111,12 @@ def main(args):
                 original_pred_latent, _ = get_original(noise_scheduler, model_pred, noisy_latents, timesteps)
                 decoded_original_pred = vae.decode(original_pred_latent).sample/vae.config.scaling_factor
                 decoded_original_pred = (decoded_original_pred+1)/2.
-                print(decoded_original_pred.shape, torch.min(decoded_original_pred), torch.max(decoded_original_pred))
                 code_losses = []
                 for i in range(bsz):
                     decoded_original_pred[i] = qrcode_transform(decoded_original_pred[i])
                     controlnet_image[i] = qrcode_transform(controlnet_image[i])
-                    print(decoded_original_pred[i].shape, (qrcode_sizes[i], qrcode_sizes[i]))
-                    predicted_qr = F.interpolate(decoded_original_pred[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC)
-                    code_target = F.interpolate(controlnet_image[i], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
+                    predicted_qr = F.interpolate(decoded_original_pred[i][None], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC)
+                    code_target = F.interpolate(controlnet_image[i][None], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
                     if args.qr_bce_loss:
                         code_losses.append(F.binary_cross_entropy(torch.clip(torch.flatten(predicted_qr.float()), min=args.label_smoothing, max=1-args.label_smoothing) , torch.flatten(code_target.float()), reduction="mean"))
                     else:
