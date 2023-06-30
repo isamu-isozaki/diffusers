@@ -1109,7 +1109,7 @@ def main(args):
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
                 original_pred_latent, _ = get_original(noise_scheduler, model_pred, noisy_latents, timesteps)
-                decoded_original_pred = vae.decode(original_pred_latent)/vae.config.scaling_factor
+                decoded_original_pred = vae.decode(original_pred_latent).sample/vae.config.scaling_factor
                 decoded_original_pred = (decoded_original_pred+1)/2.
                 code_losses = []
                 for i in range(bsz):
