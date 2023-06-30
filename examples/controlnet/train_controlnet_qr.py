@@ -59,7 +59,7 @@ from torch import nn
 from einops import einsum
 
 def get_original(noise_scheduler, model_output, sample: torch.FloatTensor, timestep: int):
-        print(timestep.shape, noise_scheduler.alphas_cumprod.shape)
+        print(timestep.device, noise_scheduler.alphas_cumprod.device)
         t = timestep
         alpha_prod_t = noise_scheduler.alphas_cumprod[t]
         beta_prod_t = 1 - alpha_prod_t
