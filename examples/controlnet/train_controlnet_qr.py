@@ -1058,6 +1058,8 @@ def main(args):
     )
     image_logs = None
     qrcode_transform = transforms.Compose([transforms.Grayscale(num_output_channels=1), transforms.GaussianBlur(3)])
+    noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device=accelerator.device, dtype=weight_dtype)
+
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet):
