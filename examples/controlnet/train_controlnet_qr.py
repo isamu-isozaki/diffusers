@@ -59,7 +59,6 @@ from torch import nn
 from einops import einsum
 
 def get_original(noise_scheduler, model_output, sample: torch.FloatTensor, timestep: int):
-        print(timestep.device, noise_scheduler.alphas_cumprod.device)
         t = timestep
         alpha_prod_t = noise_scheduler.alphas_cumprod[t]
         beta_prod_t = 1 - alpha_prod_t
@@ -1109,7 +1108,7 @@ def main(args):
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
-                original_pred_latent = get_original(noise_scheduler, model_pred, noisy_latents, timesteps)
+                original_pred_latent, _ = get_original(noise_scheduler, model_pred, noisy_latents, timesteps)
                 decoded_original_pred = vae.decode(original_pred_latent)/vae.config.scaling_factor
                 decoded_original_pred = (decoded_original_pred+1)/2.
                 code_losses = []
