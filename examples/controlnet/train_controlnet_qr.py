@@ -123,24 +123,12 @@ def log_validation(vae, text_encoder, tokenizer, unet, controlnet, args, acceler
     else:
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
-    if len(args.validation_image) == len(args.validation_prompt):
-        validation_images = args.validation_image
-        validation_prompts = args.validation_prompt
-    elif len(args.validation_image) == 1:
-        validation_images = args.validation_image * len(args.validation_prompt)
-        validation_prompts = args.validation_prompt
-    elif len(args.validation_prompt) == 1:
-        validation_images = args.validation_image
-        validation_prompts = args.validation_prompt * len(args.validation_image)
-    else:
-        raise ValueError(
-            "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
-        )
+    validation_prompts = args.validation_prompt
 
     image_logs = []
 
-    for validation_prompt, validation_image in zip(validation_prompts, validation_images):
-        validation_image = Image.open(validation_image).convert("RGB")
+    for validation_prompt in validation_prompts:
+        validation_image = get_random_qr_code(args)
 
         images = []
 
@@ -253,6 +241,12 @@ These are controlnet weights trained on {base_model} with new type of conditioni
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a ControlNet training script.")
+    parser.add_argument(
+        "--qr_blocksize",
+        type=int,
+        default=10,
+        help="qr block size.",
+    )
     parser.add_argument(
         "--label_smoothing",
         type=float,
@@ -609,23 +603,8 @@ def parse_args(input_args=None):
     if args.proportion_empty_prompts < 0 or args.proportion_empty_prompts > 1:
         raise ValueError("`--proportion_empty_prompts` must be in the range [0, 1].")
 
-    if args.validation_prompt is not None and args.validation_image is None:
-        raise ValueError("`--validation_image` must be set if `--validation_prompt` is set")
-
-    if args.validation_prompt is None and args.validation_image is not None:
-        raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
-
-    if (
-        args.validation_image is not None
-        and args.validation_prompt is not None
-        and len(args.validation_image) != 1
-        and len(args.validation_prompt) != 1
-        and len(args.validation_image) != len(args.validation_prompt)
-    ):
-        raise ValueError(
-            "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
-            " or the same number of `--validation_prompt`s and `--validation_image`s"
-        )
+    if args.validation_prompt is None:
+        raise ValueError("`--validation_prompt` must be set")
 
     if args.resolution % 8 != 0:
         raise ValueError(
@@ -644,7 +623,7 @@ def get_random_qr_code(args):
     qr = qrcode.QRCode(
         version=version,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=10,
+        box_size=args.qr_blocksize,
         border=0
     )
     qr.add_data(data)
@@ -740,7 +719,7 @@ def make_train_dataset(args, tokenizer, accelerator):
         images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in images]
         conditioning_images = [get_random_qr_code(args).convert("RGB") for _ in range(len(examples[image_column]))]
-        qrcode_sizes = [condition_image.size[0] for condition_image in conditioning_images]
+        qrcode_sizes = [condition_image.size[0]//args.qr_blocksize for condition_image in conditioning_images]
         conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
 
         examples["pixel_values"] = images
