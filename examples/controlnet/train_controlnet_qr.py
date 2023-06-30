@@ -1115,8 +1115,8 @@ def main(args):
                 for i in range(bsz):
                     decoded_original_pred[i] = qrcode_transform(decoded_original_pred[i])
                     controlnet_image[i] = qrcode_transform(controlnet_image[i])
-                    predicted_qr = F.interpolate(decoded_original_pred[i][None], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC)
-                    code_target = F.interpolate(controlnet_image[i][None], size=(qrcode_sizes[i], qrcode_sizes[i]), mode=transforms.InterpolationMode.BICUBIC) > 0.5
+                    predicted_qr = F.interpolate(decoded_original_pred[i][None], size=(qrcode_sizes[i], qrcode_sizes[i]), mode="bicubic")
+                    code_target = F.interpolate(controlnet_image[i][None], size=(qrcode_sizes[i], qrcode_sizes[i]), mode="bicubic") > 0.5
                     if args.qr_bce_loss:
                         code_losses.append(F.binary_cross_entropy(torch.clip(torch.flatten(predicted_qr.float()), min=args.label_smoothing, max=1-args.label_smoothing) , torch.flatten(code_target.float()), reduction="mean"))
                     else:
