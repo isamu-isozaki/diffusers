@@ -346,6 +346,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
                 The instantiated processor class or a dictionary of processor classes that will be set as the processor
                 of **all** `Attention` layers.
             In case `processor` is a dict, the key needs to define the path to the corresponding cross attention processor. This is strongly recommended when setting trainable attention processors.:
+                
 
         """
         count = len(self.attn_processors.keys())

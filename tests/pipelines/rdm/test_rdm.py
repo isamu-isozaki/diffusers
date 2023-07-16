@@ -1,16 +1,13 @@
-
-
 import gc
-import tempfile
 import time
 import unittest
 
-from PIL import Image
 import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
 from packaging import version
-from transformers import CLIPConfig, CLIPModel, CLIPTokenizer, CLIPFeatureExtractor
+from PIL import Image
+from transformers import CLIPConfig, CLIPFeatureExtractor, CLIPModel, CLIPTokenizer
 
 from diffusers import (
     AutoencoderKL,
@@ -22,13 +19,10 @@ from diffusers import (
     PNDMScheduler,
     RDMPipeline,
     UNet2DConditionModel,
-    logging,
 )
-from diffusers.models.attention_processor import AttnProcessor
 from diffusers.utils import load_numpy, nightly, slow, torch_device
-from diffusers.utils.testing_utils import CaptureLogger, require_torch_gpu
+from diffusers.utils.testing_utils import require_torch_gpu
 
-from ...models.test_models_unet_2d_condition import create_lora_layers
 from ..pipeline_params import TEXT_TO_IMAGE_BATCH_PARAMS, TEXT_TO_IMAGE_PARAMS
 from ..test_pipelines_common import PipelineTesterMixin
 
@@ -78,9 +72,13 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
         clip_config = CLIPConfig.from_pretrained("hf-internal-testing/tiny-random-clip")
         clip_config.text_config.vocab_size = 49408
 
-        clip = CLIPModel.from_pretrained("hf-internal-testing/tiny-random-clip", config=clip_config, ignore_mismatched_sizes=True)
+        clip = CLIPModel.from_pretrained(
+            "hf-internal-testing/tiny-random-clip", config=clip_config, ignore_mismatched_sizes=True
+        )
         tokenizer = CLIPTokenizer.from_pretrained("hf-internal-testing/tiny-random-clip")
-        feature_extractor = CLIPFeatureExtractor.from_pretrained("hf-internal-testing/tiny-random-clip", size={"shortest_edge": 30}, crop_size={"height": 30, "width": 30})
+        feature_extractor = CLIPFeatureExtractor.from_pretrained(
+            "hf-internal-testing/tiny-random-clip", size={"shortest_edge": 30}, crop_size={"height": 30, "width": 30}
+        )
 
         components = {
             "unet": unet,
@@ -106,7 +104,7 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             "guidance_scale": 6.0,
             "output_type": "numpy",
             "height": 64,
-            "width": 64
+            "width": 64,
         }
         return inputs
 
@@ -124,7 +122,7 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
 
         image_slice = image[0, -3:, -3:, -1]
         assert image.shape == (1, 64, 64, 3)
-        expected_slice = np.array([0.489, 0.591, 0.478, 0.505,  0.587, 0.481, 0.536,  0.493, 0.478])
+        expected_slice = np.array([0.489, 0.591, 0.478, 0.505, 0.587, 0.481, 0.536, 0.493, 0.478])
         assert np.abs(image_slice.flatten() - expected_slice).max() < 1e-2
 
     def test_rdm_ddim_factor_8(self):
@@ -136,8 +134,8 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
         sd_pipe.set_progress_bar_config(disable=None)
 
         inputs = self.get_dummy_inputs(device)
-        inputs['height'] = 136
-        inputs['width'] = 136
+        inputs["height"] = 136
+        inputs["width"] = 136
         output = sd_pipe(**inputs)
         image = output.images
 
@@ -258,12 +256,28 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
 
         # Test that tiled decode at 512x512 yields the same result as the non-tiled decode
         generator = torch.Generator(device=device).manual_seed(0)
-        output_1 = sd_pipe([prompt], generator=generator, guidance_scale=6.0, num_inference_steps=2, height=64, width=64, output_type="np")
+        output_1 = sd_pipe(
+            [prompt],
+            generator=generator,
+            guidance_scale=6.0,
+            num_inference_steps=2,
+            height=64,
+            width=64,
+            output_type="np",
+        )
 
         # make sure tiled vae decode yields the same result
         sd_pipe.enable_vae_tiling()
         generator = torch.Generator(device=device).manual_seed(0)
-        output_2 = sd_pipe([prompt], generator=generator, guidance_scale=6.0, num_inference_steps=2, height=64, width=64, output_type="np")
+        output_2 = sd_pipe(
+            [prompt],
+            generator=generator,
+            guidance_scale=6.0,
+            num_inference_steps=2,
+            height=64,
+            width=64,
+            output_type="np",
+        )
 
         assert np.abs(output_2.images.flatten() - output_1.images.flatten()).max() < 5e-1
 
@@ -282,7 +296,7 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
         sd_pipe.set_progress_bar_config(disable=None)
 
         inputs = self.get_dummy_inputs(device)
-        inputs['retrieved_images'] = [Image.fromarray(np.zeros((64, 64, 3)).astype(np.uint8))]
+        inputs["retrieved_images"] = [Image.fromarray(np.zeros((64, 64, 3)).astype(np.uint8))]
         output = sd_pipe(**inputs)
         image = output.images
 
@@ -292,6 +306,8 @@ class RDMPipelineFastTests(PipelineTesterMixin, unittest.TestCase):
         expected_slice = np.array([0.489, 0.591, 0.478, 0.505, 0.587, 0.481, 0.536, 0.493, 0.478])
 
         assert np.abs(image_slice.flatten() - expected_slice).max() < 1e-2
+
+
 @slow
 @require_torch_gpu
 class RDMPipelineSlowTests(unittest.TestCase):
@@ -666,6 +682,7 @@ class RDMPipelineSlowTests(unittest.TestCase):
         expected_slice = np.array([0.489, 0.591, 0.478, 0.505, 0.587, 0.481, 0.536, 0.493, 0.478])
         assert np.abs(image_slice - expected_slice).max() < 5e-3
 
+
 @nightly
 @require_torch_gpu
 class RDMPipelineNightlyTests(unittest.TestCase):
@@ -701,6 +718,7 @@ class RDMPipelineNightlyTests(unittest.TestCase):
         )
         max_diff = np.abs(expected_image - image).max()
         assert max_diff < 1e-3
+
     def test_rdm_ddim(self):
         sd_pipe = RDMPipeline.from_pretrained("fusing/rdm").to(torch_device)
         sd_pipe.scheduler = DDIMScheduler.from_config(sd_pipe.scheduler.config)
