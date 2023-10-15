@@ -33,6 +33,7 @@ import torch.utils.checkpoint
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
+from accelerate.state import AcceleratorState
 from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, model_info, upload_folder
 from packaging import version
@@ -42,6 +43,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
+from transformers.utils import ContextManagers
 
 import diffusers
 from diffusers import (
@@ -906,21 +908,36 @@ def main(args):
             use_fast=False,
         )
 
+    def deepspeed_zero_init_disabled_context_manager():
+        """
+        returns either a context list that includes one that will disable zero.Init or an empty context list
+        """
+        deepspeed_plugin = AcceleratorState().deepspeed_plugin if accelerate.state.is_initialized() else None
+        if deepspeed_plugin is None:
+            return []
+
+        return [deepspeed_plugin.zero3_init_context_manager(enable=False)]
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
+    # Taken from examples/text_to_image/train_text_to_image.py
+    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        if not args.train_text_encoder:
+            text_encoder = text_encoder_cls.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
+            )
+        if model_has_vae(args):
+            vae = AutoencoderKL.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
+            )
+        else:
+            vae = None
 
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    text_encoder = text_encoder_cls.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-    )
-
-    if model_has_vae(args):
-        vae = AutoencoderKL.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
+    if args.train_text_encoder:
+        text_encoder = text_encoder_cls.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
         )
-    else:
-        vae = None
 
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
