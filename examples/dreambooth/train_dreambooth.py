@@ -31,6 +31,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
+import accelerate
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.state import AcceleratorState
@@ -413,6 +414,9 @@ def parse_args(input_args=None):
     parser.add_argument("--lr_power", type=float, default=1.0, help="Power factor of the polynomial scheduler.")
     parser.add_argument(
         "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
+    )
+    parser.add_argument(
+        "--use_deepspeed_cpu_adam", action="store_true", help="Whether or not to use cpu offloaded deepspeed Adam."
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -1034,6 +1038,14 @@ def main(args):
             )
 
         optimizer_class = bnb.optim.AdamW8bit
+    elif args.use_deepspeed_cpu_adam:
+        try:
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
+        except ImportError:
+            raise ImportError(
+                "To use deepspeed, please install the deepspeed library: `pip install deepspeed`."
+            )
+        optimizer_class = DeepSpeedCPUAdam
     else:
         optimizer_class = torch.optim.AdamW
 
