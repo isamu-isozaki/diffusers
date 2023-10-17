@@ -419,6 +419,15 @@ def parse_args(input_args=None):
         "--use_deepspeed_cpu_adam", action="store_true", help="Whether or not to use cpu offloaded deepspeed Adam."
     )
     parser.add_argument(
+        "--use_deepspeed_one_bit_adam", action="store_true", help="Whether or not to use deepspeed one bit adam."
+    )
+    parser.add_argument(
+        "--use_deepspeed_fused_adam", action="store_true", help="Whether or not to use deepspeed fused adam."
+    )
+    parser.add_argument(
+        "--use_deepspeed_zero_one_adam", action="store_true", help="Whether or not to use deepspeed zero one bit adam."
+    )
+    parser.add_argument(
         "--dataloader_num_workers",
         type=int,
         default=0,
@@ -1046,6 +1055,31 @@ def main(args):
                 "To use deepspeed, please install the deepspeed library: `pip install deepspeed`."
             )
         optimizer_class = DeepSpeedCPUAdam
+    elif args.use_deepspeed_one_bit_adam:
+        try:
+            from deepspeed.runtime.fp16.onebit.adam import OneBitAdam
+        except ImportError:
+            raise ImportError(
+                "To use deepspeed, please install the deepspeed library: `pip install deepspeed`."
+            )
+        optimizer_class = OneBitAdam
+    elif args.use_deepspeed_fused_adam:
+        try:
+            from deepspeed.ops.adam import FusedAdam
+        except ImportError:
+            raise ImportError(
+                "To use deepspeed, please install the deepspeed library: `pip install deepspeed`.",
+                "In addition, to used FusedAdam, please install the apex library: `pip install apex`."
+            )
+        optimizer_class = FusedAdam
+    elif args.use_deepspeed_zero_one_adam:
+        try:
+            from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
+        except ImportError:
+            raise ImportError(
+                "To use deepspeed, please install the deepspeed library: `pip install deepspeed`."
+            )
+        optimizer_class = ZeroOneAdam
     else:
         optimizer_class = torch.optim.AdamW
 
